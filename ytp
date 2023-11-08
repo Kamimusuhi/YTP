@@ -1,0 +1,100 @@
+#!/bin/bash
+clear
+main_menu() {
+    echo "Main Menu"
+    echo "1. Fetch Feed"
+    echo "2. Search Videos"
+    echo "0. Exit"
+    read -p "Enter your choice: " menu_choice
+
+    case "$menu_choice" in
+        1)
+            fetch_feed
+            ;;
+        2)
+            search_videos
+            ;;
+        0)
+            echo "Exiting the script."
+            exit 0
+            ;;
+        *)
+            echo "Invalid choice. Please try again."
+            main_menu
+            ;;
+    esac
+}
+
+fetch_feed() {
+    clear
+    # Define the URL with the authentication token
+    URL="https://pipedapi.kavin.rocks/feed?authToken="
+
+    # Number of videos to fetch
+    NUM_VIDEOS=10
+
+    response=$(curl -s "$URL")
+    if [ $? -eq 0 ]; then
+        video_count=0
+        video_urls=()
+        while IFS= read -r line; do
+            video_title=$(jq -r '.title' <<< "$line")
+            video_url=$(jq -r '.url' <<< "$line")
+            if [ "$video_url" != "null" ]; then
+                ((video_count++))
+                video_urls+=("$video_url")
+                echo " [$video_count] $video_title"
+                echo
+
+                if [ "$video_count" -ge "$NUM_VIDEOS" ]; then
+                    break
+                fi
+            fi
+        done <<< "$(echo "$response" | jq -c '.[]')"
+
+        read -p "Enter a number between 1 and $video_count to play the corresponding video (or any other key to exit): " user_choice
+
+        if [[ "$user_choice" -ge 1 && "$user_choice" -le "$video_count" ]]; then
+            selected_video_url="https://www.youtube.com${video_urls[user_choice - 1]}"
+            mpv "$selected_video_url"
+        else
+            echo "Exiting the script. No valid choice entered."
+        fi
+    else
+        echo "Error: Unable to fetch videos from the specified URL."
+    fi
+}
+
+search_videos() {
+    clear
+    read -p "Enter search query: " search_query
+
+    formatted_query=$(echo "$search_query" | sed 's/ /+/g') # Replace spaces with +
+    echo "Scraping Onion.tube search results for query: $search_query"
+    raw_html_response=$(curl -s "https://onion.tube/search?q=$formatted_query" 2>/dev/null)
+
+    # Extract up to 16 lines containing <p dir="auto"> using grep
+    video_lines=$(echo "$raw_html_response" | grep -o '<a href="\/watch?v=[^"]*"><p dir="auto">.*<\/p><\/a>' | head -n 16)
+
+    IFS=$'\n'
+    count=0
+    for video_line in $video_lines; do
+        ((count++))
+        video_title=$(echo "$video_line" | sed -n 's/<a href="\/watch?v=[^"]*"><p dir="auto">\([^<]*\)<\/p><\/a>/\1/p')
+        echo " [$count] $video_title"
+        echo
+    done
+
+    read -p "Enter the number corresponding to the video you want to play (or 0 to go back to the main menu): " user_choice
+
+    if [[ "$user_choice" -ge 1 && "$user_choice" -le "$count" ]]; then
+        selected_video_url=$(echo "$video_lines" | sed -n "${user_choice}p" | sed -n 's/.*<a href="\([^"]*\)".*/https:\/\/www.youtube.com\1/p')
+        mpv "$selected_video_url"
+    elif [ "$user_choice" -eq 0 ]; then
+        main_menu
+    else
+        echo "Invalid choice. Exiting the script."
+    fi
+}
+
+main_menu
